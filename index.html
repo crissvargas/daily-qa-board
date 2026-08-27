@@ -3,541 +3,11 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Daily QA · Llamado de Squads</title>
+<title>Daily QA</title>
 <style>
   html, body { margin: 0; padding: 0; background: #F7F8F9; }
   #root { min-height: 100vh; }
-</style>
-</head>
-<body>
-<div id="root"></div>
 
-<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-<script type="text/babel" data-presets="react">
-const { useState, useEffect, useRef, useCallback } = React;
-
-// Jira-like avatar palette (saturated tones, white initials on top)
-const AVATAR_COLORS = [
-  "#0052CC", "#5243AA", "#00875A", "#FF5630", "#00A3BF",
-  "#6554C0", "#36B37E", "#FF8B00", "#8777D9", "#4C9AFF",
-];
-
-// Pastel, sticky-note style backgrounds, one per squad card
-const SQUAD_PASTELS = [
-  "#FFF3B0", // yellow
-  "#FFD6E8", // pink
-  "#CFE3FF", // blue
-  "#E4D6FF", // purple
-  "#FFDCC2", // orange
-  "#D6F5D0", // green
-  "#D9F0F5", // cyan
-];
-
-function pastelForIndex(idx) {
-  return SQUAD_PASTELS[idx % SQUAD_PASTELS.length];
-}
-
-function shuffleArray(arr) {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
-// Shuffles the member order inside each squad, once per page load, so the
-// call order (and the visual order in each box) isn't always the same.
-function shuffleSquadMembers(squadList) {
-  return squadList.map((s) => ({ ...s, members: shuffleArray(s.members) }));
-}
-
-function colorForName(name) {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const idx = Math.abs(hash) % AVATAR_COLORS.length;
-  return AVATAR_COLORS[idx];
-}
-
-function initialsForName(name) {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
-}
-
-function uid() {
-  return `id-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
-}
-
-function formatTime(totalSeconds) {
-  const m = Math.floor(totalSeconds / 60);
-  const s = totalSeconds % 60;
-  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-}
-
-const DEFAULT_DURATION = 120;
-const STORAGE_KEY = "qaDailyBoardConfig_v2";
-
-function getTodayLabel() {
-  const s = new Date().toLocaleDateString("es-PE", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-// Hardcoded default squads (7 squads x 3 people). These load automatically
-// the first time, before any edits are saved in this browser.
-function buildDefaultSquads() {
-  const data = [
-    ["Squad Boton Web", ["Brandon Villanueva", "Sandro Villegas", "Daniel Espiritu"]],
-    ["Squad SDK Movil", ["Jonathan Picon"]],
-    ["Squad Tokenización", ["Kenyo Solis", "Juan Carlos Araujo"]],
-    ["Squad Recurrentes", ["Victoria Farah", "Kevin Yenque", "Carolina Destinobles", "Carlos Chafloque", "Ronald Carranza"]],
-    ["Squad CMS Empresa", ["Sharon Maiz"]],
-    ["Squad Procesamiento", ["Keyko Soto", "Ray Reyes", "Gustavo Espino", "Jair Araujo"]],
-    ["Squad CMS Opensource & Developers", ["Joan Aquino", "Carolina Meza"]],
-  ];
-  return data.map(([name, members]) => ({
-    id: uid(),
-    name,
-    members: members.map((m) => ({ id: uid(), name: m })),
-  }));
-}
-
-// --- localStorage persistence (replaces Claude's window.storage) ---
-function loadConfig() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch (e) {
-    return null;
-  }
-}
-
-function saveConfig(squads, duration) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ squads, duration }));
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
-function DailyQABoard() {
-  const [squads, setSquads] = useState(null);
-  const [loaded, setLoaded] = useState(false);
-  const [duration, setDuration] = useState(DEFAULT_DURATION);
-  const [order, setOrder] = useState([]);
-  const [currentIdx, setCurrentIdx] = useState(0);
-  const [timeLeft, setTimeLeft] = useState(DEFAULT_DURATION);
-  const [isRunning, setIsRunning] = useState(false);
-  const [doneIds, setDoneIds] = useState(() => new Set());
-  const [editMode, setEditMode] = useState(false);
-  const [storageError, setStorageError] = useState(false);
-  const intervalRef = useRef(null);
-
-  // Load saved squads/duration once; fall back to the hardcoded defaults.
-  // Member order within each squad is reshuffled every time the page loads.
-  useEffect(() => {
-    const parsed = loadConfig();
-    if (parsed && Array.isArray(parsed.squads)) {
-      setSquads(shuffleSquadMembers(parsed.squads));
-      const d = parsed.duration || DEFAULT_DURATION;
-      setDuration(d);
-      setTimeLeft(d);
-    } else {
-      setSquads(shuffleSquadMembers(buildDefaultSquads()));
-    }
-    setLoaded(true);
-  }, []);
-
-  // Persist edits to this browser only
-  useEffect(() => {
-    if (!loaded || squads === null) return;
-    const ok = saveConfig(squads, duration);
-    setStorageError(!ok);
-  }, [squads, duration, loaded]);
-
-  // Keep the flat call order in sync with squad membership
-  useEffect(() => {
-    if (!squads) return;
-    const ids = squads.flatMap((s) => s.members.map((m) => m.id));
-    setOrder((prev) => {
-      const stillValid = prev.filter((id) => ids.includes(id));
-      const fresh = ids.filter((id) => !stillValid.includes(id));
-      return [...stillValid, ...fresh];
-    });
-    setDoneIds((prev) => {
-      const next = new Set();
-      prev.forEach((id) => {
-        if (ids.includes(id)) next.add(id);
-      });
-      return next;
-    });
-  }, [squads]);
-
-  useEffect(() => {
-    if (currentIdx >= order.length && order.length > 0) setCurrentIdx(0);
-  }, [order, currentIdx]);
-
-  const membersById = useCallback(() => {
-    const map = new Map();
-    (squads || []).forEach((s) =>
-      s.members.forEach((m) =>
-        map.set(m.id, { ...m, squadId: s.id, squadName: s.name })
-      )
-    );
-    return map;
-  }, [squads]);
-
-  const totalMembers = order.length;
-  const currentId = order[currentIdx];
-  const currentMember = currentId ? membersById().get(currentId) : null;
-
-  useEffect(() => {
-    if (isRunning) {
-      intervalRef.current = setInterval(() => {
-        setTimeLeft((t) => (t > 0 ? t - 1 : 0));
-      }, 1000);
-    }
-    return () => clearInterval(intervalRef.current);
-  }, [isRunning]);
-
-  useEffect(() => {
-    if (isRunning && timeLeft === 0) {
-      advance();
-    }
-    // eslint-disable-next-line
-  }, [timeLeft]);
-
-  function findNextUndone(fromIdx) {
-    if (order.length === 0) return 0;
-    for (let step = 1; step <= order.length; step++) {
-      const idx = (fromIdx + step) % order.length;
-      if (!doneIds.has(order[idx])) return idx;
-    }
-    return (fromIdx + 1) % order.length;
-  }
-
-  function advance() {
-    setIsRunning(false);
-    if (currentId) {
-      setDoneIds((prev) => {
-        const next = new Set(prev);
-        next.add(currentId);
-        return next;
-      });
-    }
-    setCurrentIdx((idx) => findNextUndone(idx));
-    setTimeLeft(duration);
-  }
-
-  function selectMember(idx) {
-    const id = order[idx];
-    setIsRunning(false);
-    setDoneIds((prev) => {
-      if (!prev.has(id)) return prev;
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
-    setCurrentIdx(idx);
-    setTimeLeft(duration);
-  }
-
-  function goPrev() {
-    if (order.length === 0) return;
-    setIsRunning(false);
-    setCurrentIdx((idx) => (idx - 1 + order.length) % order.length);
-    setTimeLeft(duration);
-  }
-
-  function shuffleOrder() {
-    setOrder((prev) => {
-      const arr = [...prev];
-      for (let i = arr.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [arr[i], arr[j]] = [arr[j], arr[i]];
-      }
-      return arr;
-    });
-    setCurrentIdx(0);
-    setTimeLeft(duration);
-    setIsRunning(false);
-  }
-
-  function resetMeeting() {
-    setDoneIds(new Set());
-    setCurrentIdx(0);
-    setTimeLeft(duration);
-    setIsRunning(false);
-  }
-
-  function restoreDefaults() {
-    setSquads(shuffleSquadMembers(buildDefaultSquads()));
-    setDoneIds(new Set());
-    setCurrentIdx(0);
-    setIsRunning(false);
-  }
-
-  function addSquad() {
-    setSquads((prev) => [
-      ...(prev || []),
-      { id: uid(), name: "Nuevo squad", members: [] },
-    ]);
-    setEditMode(true);
-  }
-
-  function removeSquad(squadId) {
-    setSquads((prev) => prev.filter((s) => s.id !== squadId));
-  }
-
-  function renameSquad(squadId, name) {
-    setSquads((prev) => prev.map((s) => (s.id === squadId ? { ...s, name } : s)));
-  }
-
-  function addMember(squadId) {
-    setSquads((prev) =>
-      prev.map((s) =>
-        s.id === squadId
-          ? { ...s, members: [...s.members, { id: uid(), name: "" }] }
-          : s
-      )
-    );
-  }
-
-  function renameMember(squadId, memberId, name) {
-    setSquads((prev) =>
-      prev.map((s) =>
-        s.id === squadId
-          ? {
-              ...s,
-              members: s.members.map((m) =>
-                m.id === memberId ? { ...m, name } : m
-              ),
-            }
-          : s
-      )
-    );
-  }
-
-  function removeMember(squadId, memberId) {
-    setSquads((prev) =>
-      prev.map((s) =>
-        s.id === squadId
-          ? { ...s, members: s.members.filter((m) => m.id !== memberId) }
-          : s
-      )
-    );
-  }
-
-  const doneCount = doneIds.size;
-  const isUrgent = isRunning && timeLeft <= 10 && timeLeft > 0;
-
-  if (squads === null) {
-    return (
-      <div style={{ padding: 40, fontFamily: "sans-serif", color: "#6B778C" }}>
-        Cargando llamado…
-      </div>
-    );
-  }
-
-  return (
-    <div className="qa-board">
-      <div className="qa-header">
-        <div>
-          <p className="qa-title">Daily QA</p>
-          <p className="qa-date">{getTodayLabel()}</p>
-          <p className="qa-progress">
-            Llamados <b>{doneCount}</b> / {totalMembers}
-          </p>
-        </div>
-        <div className="qa-controls-row">
-          <button className="qa-btn ghost" onClick={() => setEditMode((v) => !v)}>
-            {editMode ? "Listo" : "Editar equipos"}
-          </button>
-          <button className="qa-btn ghost" onClick={resetMeeting} disabled={totalMembers === 0}>
-            Reiniciar reunión
-          </button>
-        </div>
-      </div>
-
-      {squads.length === 0 ? (
-        <div className="qa-empty">
-          <h3>No hay squads configurados</h3>
-          <p>Crea un squad o restaura los valores por defecto del código.</p>
-          <div className="qa-empty-actions">
-            <button className="qa-btn primary" onClick={addSquad}>+ Crear squad</button>
-            <button className="qa-btn ghost" onClick={restoreDefaults}>Restaurar valores por defecto</button>
-          </div>
-        </div>
-      ) : (
-        <>
-          <div className="qa-control-panel">
-            <div className="qa-timer-block">
-              <span className="qa-eyebrow">En turno</span>
-              <span className="qa-current-name">
-                {currentMember ? currentMember.name || "Sin nombre" : "—"}
-              </span>
-              <span className="qa-current-squad">
-                {currentMember ? currentMember.squadName : "Selecciona a alguien"}
-              </span>
-            </div>
-            <div className={`qa-timer ${isUrgent ? "urgent" : ""}`}>
-              {formatTime(timeLeft)}
-            </div>
-            <div className="qa-controls-row">
-              <button className="qa-btn ghost" onClick={goPrev} disabled={totalMembers === 0}>
-                ← Anterior
-              </button>
-              <button
-                className="qa-btn primary"
-                onClick={() => {
-                  if (isRunning) {
-                    advance();
-                  } else {
-                    setIsRunning(true);
-                  }
-                }}
-                disabled={!currentMember}
-              >
-                {isRunning ? "■ Detener" : "▶ Iniciar"}
-              </button>
-              <div className="qa-duration-input">
-                Min/persona
-                <input
-                  type="number"
-                  min="1"
-                  max="30"
-                  value={Math.round(duration / 60)}
-                  onChange={(e) => {
-                    const mins = Math.max(1, Number(e.target.value) || 1);
-                    setDuration(mins * 60);
-                    if (!isRunning) setTimeLeft(mins * 60);
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="qa-squads-grid">
-            {squads.map((squad, index) => {
-              const doneInSquad = squad.members.filter((m) => doneIds.has(m.id)).length;
-              return (
-                <div className="qa-squad" key={squad.id} style={{ background: pastelForIndex(index) }}>
-                  <div className="qa-squad-head">
-                    {editMode ? (
-                      <input
-                        className="qa-edit-input"
-                        value={squad.name}
-                        onChange={(e) => renameSquad(squad.id, e.target.value)}
-                        placeholder="Nombre del squad"
-                      />
-                    ) : (
-                      <span className="qa-squad-name">{squad.name}</span>
-                    )}
-                    {!editMode && (
-                      <span className="qa-squad-tally">
-                        {doneInSquad}/{squad.members.length}
-                      </span>
-                    )}
-                    {editMode && (
-                      <button className="qa-btn danger" onClick={() => removeSquad(squad.id)}>
-                        Eliminar
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="qa-member-grid">
-                    {squad.members.map((m) => {
-                      const idx = order.indexOf(m.id);
-                      const isActive = idx === currentIdx && idx !== -1;
-                      const isDone = doneIds.has(m.id);
-                      if (editMode) {
-                        return (
-                          <div key={m.id} style={{ width: 110 }}>
-                            <input
-                              className="qa-edit-input"
-                              value={m.name}
-                              placeholder="Nombre"
-                              onChange={(e) => renameMember(squad.id, m.id, e.target.value)}
-                            />
-                            <button
-                              className="qa-btn danger"
-                              style={{ width: "100%" }}
-                              onClick={() => removeMember(squad.id, m.id)}
-                            >
-                              Quitar
-                            </button>
-                          </div>
-                        );
-                      }
-                      return (
-                        <button
-                          key={m.id}
-                          className={`qa-member ${isActive ? "active" : ""} ${isDone ? "done" : ""}`}
-                          onClick={() => idx !== -1 && selectMember(idx)}
-                        >
-                          <span className="qa-avatar" style={{ background: colorForName(m.name || "?") }}>
-                            {initialsForName(m.name || "?")}
-                            {isDone && <span className="qa-check">✓</span>}
-                          </span>
-                          <span className="qa-member-name">{m.name || "Sin nombre"}</span>
-                        </button>
-                      );
-                    })}
-                    {editMode && (
-                      <button
-                        className="qa-btn ghost"
-                        onClick={() => addMember(squad.id)}
-                        style={{ height: 40, alignSelf: "center" }}
-                      >
-                        + Persona
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {editMode && (
-            <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
-              <button className="qa-btn primary" onClick={addSquad}>
-                + Agregar squad
-              </button>
-              <button className="qa-btn ghost" onClick={restoreDefaults}>
-                Restaurar valores por defecto
-              </button>
-            </div>
-          )}
-        </>
-      )}
-
-      <p className="qa-note">
-        Los squads por defecto vienen definidos. Si los editas desde la web, el cambio se
-        guarda solo en este navegador.{" "}
-        {storageError ? "No se pudo guardar el último cambio." : ""}
-      </p>
-    </div>
-  );
-}
-
-const root = ReactDOM.createRoot(document.getElementById("root"));
-root.render(<DailyQABoard />);
-</script>
-
-<style>
   .qa-board {
     --bg: #F7F8F9;
     --panel: #FFFFFF;
@@ -625,7 +95,6 @@ root.render(<DailyQABoard />);
     border: 2px solid transparent; transition: box-shadow 0.12s ease;
   }
   .qa-member.active .qa-avatar { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
-  .qa-member.done .qa-avatar { opacity: 1; }
   .qa-check {
     position: absolute; bottom: -2px; right: -2px; width: 18px; height: 18px;
     border-radius: 50%; background: var(--success); color: #FFFFFF; font-size: 11px;
@@ -653,5 +122,457 @@ root.render(<DailyQABoard />);
     .qa-board { padding: 16px; }
   }
 </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var AVATAR_COLORS = [
+    "#0052CC", "#5243AA", "#00875A", "#FF5630", "#00A3BF",
+    "#6554C0", "#36B37E", "#FF8B00", "#8777D9", "#4C9AFF",
+  ];
+
+  var SQUAD_PASTELS = [
+    "#FFF3B0", "#FFD6E8", "#CFE3FF", "#E4D6FF",
+    "#FFDCC2", "#D6F5D0", "#D9F0F5",
+  ];
+
+  var DEFAULT_DURATION = 120;
+  var STORAGE_KEY = "qaDailyBoardConfig_v2";
+
+  function colorForName(name) {
+    var hash = 0;
+    for (var i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+  }
+
+  function pastelForIndex(idx) {
+    return SQUAD_PASTELS[idx % SQUAD_PASTELS.length];
+  }
+
+  function initialsForName(name) {
+    var parts = name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return "?";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+
+  function uid() {
+    return "id-" + Date.now() + "-" + Math.floor(Math.random() * 100000);
+  }
+
+  function formatTime(totalSeconds) {
+    var m = Math.floor(totalSeconds / 60);
+    var s = totalSeconds % 60;
+    return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+  }
+
+  function getTodayLabel() {
+    var s = new Date().toLocaleDateString("es-PE", {
+      weekday: "long", day: "numeric", month: "long", year: "numeric",
+    });
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function shuffleArray(arr) {
+    var a = arr.slice();
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+    }
+    return a;
+  }
+
+  function shuffleSquadMembers(squadList) {
+    return squadList.map(function (s) {
+      return Object.assign({}, s, { members: shuffleArray(s.members) });
+    });
+  }
+
+  function buildDefaultSquads() {
+    var data = [
+      ["Squad Boton Web", ["Brandon Villanueva", "Sandro Villegas", "Daniel Espiritu"]],
+      ["Squad SDK Movil", ["Jonathan Picon"]],
+      ["Squad Tokenización", ["Kenyo Solis", "Juan Carlos Araujo"]],
+      ["Squad Recurrentes", ["Victoria Farah", "Kevin Yenque", "Carolina Destinobles", "Carlos Chafloque", "Ronald Carranza"]],
+      ["Squad CMS Empresa", ["Sharon Maiz"]],
+      ["Squad Procesamiento", ["Keyko Soto", "Ray Reyes", "Gustavo Espino", "Jair Araujo"]],
+      ["Squad CMS Opensource & Developers", ["Joan Aquino", "Carolina Meza"]],
+    ];
+    return data.map(function (pair) {
+      return {
+        id: uid(),
+        name: pair[0],
+        members: pair[1].map(function (m) { return { id: uid(), name: m }; }),
+      };
+    });
+  }
+
+  // ---------------- state ----------------
+  var squads = [];
+  var duration = DEFAULT_DURATION;
+  var timeLeft = DEFAULT_DURATION;
+  var currentIdx = 0;
+  var isRunning = false;
+  var doneIds = {};
+  var editMode = false;
+  var storageError = false;
+  var tickHandle = null;
+  var saveTimer = null;
+
+  function loadConfig() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function saveConfigNow() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ squads: squads, duration: duration }));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function scheduleSave() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () {
+      storageError = !saveConfigNow();
+      var el = document.getElementById("qa-footer-error");
+      if (el) el.textContent = storageError ? "No se pudo guardar el último cambio." : "";
+    }, 300);
+  }
+
+  function getOrder() {
+    var out = [];
+    squads.forEach(function (s) {
+      s.members.forEach(function (m) {
+        out.push({ id: m.id, name: m.name, squadId: s.id, squadName: s.name });
+      });
+    });
+    return out;
+  }
+
+  function findNextUndone(order, fromIdx) {
+    if (order.length === 0) return 0;
+    for (var step = 1; step <= order.length; step++) {
+      var idx = (fromIdx + step) % order.length;
+      if (!doneIds[order[idx].id]) return idx;
+    }
+    return (fromIdx + 1) % order.length;
+  }
+
+  function clearTick() {
+    if (tickHandle) { clearInterval(tickHandle); tickHandle = null; }
+  }
+
+  function updateTimerDisplay() {
+    var el = document.getElementById("qa-timer-value");
+    if (!el) return;
+    el.textContent = formatTime(timeLeft);
+    var urgent = isRunning && timeLeft <= 10 && timeLeft > 0;
+    el.classList.toggle("urgent", urgent);
+  }
+
+  function startTick() {
+    clearTick();
+    tickHandle = setInterval(function () {
+      timeLeft = timeLeft > 0 ? timeLeft - 1 : 0;
+      updateTimerDisplay();
+      if (timeLeft === 0) {
+        clearTick();
+        advance();
+      }
+    }, 1000);
+  }
+
+  function advance() {
+    isRunning = false;
+    clearTick();
+    var order = getOrder();
+    var current = order[currentIdx];
+    if (current) doneIds[current.id] = true;
+    currentIdx = findNextUndone(order, currentIdx);
+    timeLeft = duration;
+    render();
+  }
+
+  function selectMember(idx) {
+    isRunning = false;
+    clearTick();
+    var order = getOrder();
+    var id = order[idx] && order[idx].id;
+    if (id && doneIds[id]) delete doneIds[id];
+    currentIdx = idx;
+    timeLeft = duration;
+    render();
+  }
+
+  function goPrev() {
+    var order = getOrder();
+    if (order.length === 0) return;
+    isRunning = false;
+    clearTick();
+    currentIdx = (currentIdx - 1 + order.length) % order.length;
+    timeLeft = duration;
+    render();
+  }
+
+  function toggleRun() {
+    var order = getOrder();
+    if (!order[currentIdx]) return;
+    if (isRunning) {
+      advance();
+    } else {
+      isRunning = true;
+      startTick();
+      render();
+    }
+  }
+
+  function resetMeeting() {
+    doneIds = {};
+    currentIdx = 0;
+    timeLeft = duration;
+    isRunning = false;
+    clearTick();
+    render();
+  }
+
+  function restoreDefaults() {
+    squads = shuffleSquadMembers(buildDefaultSquads());
+    doneIds = {};
+    currentIdx = 0;
+    isRunning = false;
+    clearTick();
+    saveConfigNow();
+    render();
+  }
+
+  function toggleEditMode() {
+    editMode = !editMode;
+    render();
+  }
+
+  function addSquad() {
+    squads.push({ id: uid(), name: "Nuevo squad", members: [] });
+    editMode = true;
+    saveConfigNow();
+    render();
+  }
+
+  function removeSquad(squadId) {
+    squads = squads.filter(function (s) { return s.id !== squadId; });
+    var order = getOrder();
+    if (currentIdx >= order.length) currentIdx = 0;
+    saveConfigNow();
+    render();
+  }
+
+  function renameSquad(squadId, name) {
+    var s = squads.find(function (s) { return s.id === squadId; });
+    if (s) s.name = name;
+    scheduleSave();
+  }
+
+  function addMember(squadId) {
+    var s = squads.find(function (s) { return s.id === squadId; });
+    if (s) s.members.push({ id: uid(), name: "" });
+    saveConfigNow();
+    render();
+  }
+
+  function renameMember(squadId, memberId, name) {
+    var s = squads.find(function (s) { return s.id === squadId; });
+    if (!s) return;
+    var m = s.members.find(function (m) { return m.id === memberId; });
+    if (m) m.name = name;
+    scheduleSave();
+  }
+
+  function removeMember(squadId, memberId) {
+    var s = squads.find(function (s) { return s.id === squadId; });
+    if (s) s.members = s.members.filter(function (m) { return m.id !== memberId; });
+    var order = getOrder();
+    if (currentIdx >= order.length) currentIdx = 0;
+    saveConfigNow();
+    render();
+  }
+
+  function onDurationChange(value) {
+    var mins = Math.max(1, Number(value) || 1);
+    duration = mins * 60;
+    if (!isRunning) {
+      timeLeft = duration;
+      updateTimerDisplay();
+    }
+    scheduleSave();
+  }
+
+  // ---------------- rendering ----------------
+  function render() {
+    var order = getOrder();
+    if (currentIdx >= order.length && order.length > 0) currentIdx = 0;
+    var current = order[currentIdx];
+    var doneCount = Object.keys(doneIds).filter(function (id) {
+      return order.some(function (o) { return o.id === id; });
+    }).length;
+
+    var html = "";
+    html += '<div class="qa-header">';
+    html += '<div>';
+    html += '<p class="qa-title">Daily QA</p>';
+    html += '<p class="qa-date">' + escapeHtml(getTodayLabel()) + '</p>';
+    html += '<p class="qa-progress">Llamados <b>' + doneCount + '</b> / ' + order.length + '</p>';
+    html += '</div>';
+    html += '<div class="qa-controls-row">';
+    html += '<button class="qa-btn ghost" data-action="toggle-edit">' + (editMode ? "Listo" : "Editar equipos") + '</button>';
+    html += '<button class="qa-btn ghost" data-action="reset-meeting" ' + (order.length === 0 ? "disabled" : "") + '>Reiniciar reunión</button>';
+    html += '</div>';
+    html += '</div>';
+
+    if (squads.length === 0) {
+      html += '<div class="qa-empty">';
+      html += '<h3>No hay squads configurados</h3>';
+      html += '<p>Crea un squad o restaura los valores por defecto del código.</p>';
+      html += '<div class="qa-empty-actions">';
+      html += '<button class="qa-btn primary" data-action="add-squad">+ Crear squad</button>';
+      html += '<button class="qa-btn ghost" data-action="restore-defaults">Restaurar valores por defecto</button>';
+      html += '</div></div>';
+    } else {
+      html += '<div class="qa-control-panel">';
+      html += '<div class="qa-timer-block">';
+      html += '<span class="qa-eyebrow">En turno</span>';
+      html += '<span class="qa-current-name">' + escapeHtml(current ? (current.name || "Sin nombre") : "—") + '</span>';
+      html += '<span class="qa-current-squad">' + escapeHtml(current ? current.squadName : "Selecciona a alguien") + '</span>';
+      html += '</div>';
+      html += '<div class="qa-timer" id="qa-timer-value">' + formatTime(timeLeft) + '</div>';
+      html += '<div class="qa-controls-row">';
+      html += '<button class="qa-btn ghost" data-action="go-prev" ' + (order.length === 0 ? "disabled" : "") + '>← Anterior</button>';
+      html += '<button class="qa-btn primary" data-action="toggle-run" ' + (!current ? "disabled" : "") + '>' + (isRunning ? "■ Detener" : "▶ Iniciar") + '</button>';
+      html += '<div class="qa-duration-input">Min/persona<input type="number" min="1" max="30" id="qa-duration-input" value="' + Math.round(duration / 60) + '" /></div>';
+      html += '</div></div>';
+
+      html += '<div class="qa-squads-grid">';
+      squads.forEach(function (squad, index) {
+        var doneInSquad = squad.members.filter(function (m) { return doneIds[m.id]; }).length;
+        html += '<div class="qa-squad" style="background:' + pastelForIndex(index) + '">';
+        html += '<div class="qa-squad-head">';
+        if (editMode) {
+          html += '<input class="qa-edit-input" data-input="squad-name" data-squad="' + squad.id + '" value="' + escapeHtml(squad.name) + '" placeholder="Nombre del squad" />';
+          html += '<button class="qa-btn danger" data-action="remove-squad" data-squad="' + squad.id + '">Eliminar</button>';
+        } else {
+          html += '<span class="qa-squad-name">' + escapeHtml(squad.name) + '</span>';
+          html += '<span class="qa-squad-tally">' + doneInSquad + '/' + squad.members.length + '</span>';
+        }
+        html += '</div>';
+        html += '<div class="qa-member-grid">';
+        squad.members.forEach(function (m) {
+          var idx = order.findIndex(function (o) { return o.id === m.id; });
+          var isActive = idx === currentIdx && idx !== -1;
+          var isDone = !!doneIds[m.id];
+          if (editMode) {
+            html += '<div style="width:110px">';
+            html += '<input class="qa-edit-input" data-input="member-name" data-squad="' + squad.id + '" data-member="' + m.id + '" value="' + escapeHtml(m.name) + '" placeholder="Nombre" />';
+            html += '<button class="qa-btn danger" style="width:100%" data-action="remove-member" data-squad="' + squad.id + '" data-member="' + m.id + '">Quitar</button>';
+            html += '</div>';
+          } else {
+            html += '<button class="qa-member' + (isActive ? " active" : "") + (isDone ? " done" : "") + '" data-action="select-member" data-idx="' + idx + '">';
+            html += '<span class="qa-avatar" style="background:' + colorForName(m.name || "?") + '">';
+            html += escapeHtml(initialsForName(m.name || "?"));
+            if (isDone) html += '<span class="qa-check">✓</span>';
+            html += '</span>';
+            html += '<span class="qa-member-name">' + escapeHtml(m.name || "Sin nombre") + '</span>';
+            html += '</button>';
+          }
+        });
+        if (editMode) {
+          html += '<button class="qa-btn ghost" data-action="add-member" data-squad="' + squad.id + '" style="height:40px;align-self:center">+ Persona</button>';
+        }
+        html += '</div></div>';
+      });
+      html += '</div>';
+
+      if (editMode) {
+        html += '<div style="margin-top:16px;display:flex;gap:10px">';
+        html += '<button class="qa-btn primary" data-action="add-squad">+ Agregar squad</button>';
+        html += '<button class="qa-btn ghost" data-action="restore-defaults">Restaurar valores por defecto</button>';
+        html += '</div>';
+      }
+    }
+
+    html += '<p class="qa-note">Los squads por defecto vienen definidos. Si los editas desde la web, el cambio se guarda solo en este navegador. <span id="qa-footer-error">' + (storageError ? "No se pudo guardar el último cambio." : "") + '</span></p>';
+
+    var root = document.getElementById("root");
+    root.className = "qa-board";
+    root.innerHTML = html;
+
+    var durationInput = document.getElementById("qa-duration-input");
+    if (durationInput) {
+      durationInput.addEventListener("input", function (e) {
+        onDurationChange(e.target.value);
+      });
+    }
+    updateTimerDisplay();
+  }
+
+  // ---------------- event delegation ----------------
+  document.addEventListener("click", function (e) {
+    var el = e.target.closest("[data-action]");
+    if (!el) return;
+    var action = el.getAttribute("data-action");
+    var squadId = el.getAttribute("data-squad");
+    var memberId = el.getAttribute("data-member");
+    var idx = el.getAttribute("data-idx");
+
+    if (action === "toggle-edit") toggleEditMode();
+    else if (action === "reset-meeting") resetMeeting();
+    else if (action === "restore-defaults") restoreDefaults();
+    else if (action === "add-squad") addSquad();
+    else if (action === "remove-squad") removeSquad(squadId);
+    else if (action === "add-member") addMember(squadId);
+    else if (action === "remove-member") removeMember(squadId, memberId);
+    else if (action === "go-prev") goPrev();
+    else if (action === "toggle-run") toggleRun();
+    else if (action === "select-member" && idx !== null) selectMember(Number(idx));
+  });
+
+  document.addEventListener("input", function (e) {
+    var type = e.target.getAttribute("data-input");
+    if (type === "squad-name") {
+      renameSquad(e.target.getAttribute("data-squad"), e.target.value);
+    } else if (type === "member-name") {
+      renameMember(e.target.getAttribute("data-squad"), e.target.getAttribute("data-member"), e.target.value);
+    }
+  });
+
+  // ---------------- init ----------------
+  var parsed = loadConfig();
+  if (parsed && Array.isArray(parsed.squads)) {
+    squads = shuffleSquadMembers(parsed.squads);
+    duration = parsed.duration || DEFAULT_DURATION;
+    timeLeft = duration;
+  } else {
+    squads = shuffleSquadMembers(buildDefaultSquads());
+  }
+  render();
+})();
+</script>
 </body>
 </html>
