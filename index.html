@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Daily QA · Llamado de Squads</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #F7F8F9; }
+  #root { min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// Jira-like avatar palette (saturated tones, white initials on top)
+const AVATAR_COLORS = [
+  "#0052CC", "#5243AA", "#00875A", "#FF5630", "#00A3BF",
+  "#6554C0", "#36B37E", "#FF8B00", "#8777D9", "#4C9AFF",
+];
+
+// Pastel, sticky-note style backgrounds, one per squad card
+const SQUAD_PASTELS = [
+  "#FFF3B0", // yellow
+  "#FFD6E8", // pink
+  "#CFE3FF", // blue
+  "#E4D6FF", // purple
+  "#FFDCC2", // orange
+  "#D6F5D0", // green
+  "#D9F0F5", // cyan
+];
+
+function pastelForIndex(idx) {
+  return SQUAD_PASTELS[idx % SQUAD_PASTELS.length];
+}
+
+function shuffleArray(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// Shuffles the member order inside each squad, once per page load, so the
+// call order (and the visual order in each box) isn't always the same.
+function shuffleSquadMembers(squadList) {
+  return squadList.map((s) => ({ ...s, members: shuffleArray(s.members) }));
+}
+
+function colorForName(name) {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const idx = Math.abs(hash) % AVATAR_COLORS.length;
+  return AVATAR_COLORS[idx];
+}
+
+function initialsForName(name) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+function uid() {
+  return `id-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+}
+
+function formatTime(totalSeconds) {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+const DEFAULT_DURATION = 120;
+const STORAGE_KEY = "qaDailyBoardConfig_v2";
+
+function getTodayLabel() {
+  const s = new Date().toLocaleDateString("es-PE", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// Hardcoded default squads (7 squads x 3 people). These load automatically
+// the first time, before any edits are saved in this browser.
+function buildDefaultSquads() {
+  const data = [
+    ["Squad Boton Web", ["Brandon Villanueva", "Sandro Villegas", "Daniel Espiritu"]],
+    ["Squad SDK Movil", ["Jonathan Picon"]],
+    ["Squad Tokenización", ["Kenyo Solis", "Juan Carlos Araujo"]],
+    ["Squad Recurrentes", ["Victoria Farah", "Kevin Yenque", "Carolina Destinobles", "Carlos Chafloque", "Ronald Carranza"]],
+    ["Squad CMS Empresa", ["Sharon Maiz"]],
+    ["Squad Procesamiento", ["Keyko Soto", "Ray Reyes", "Gustavo Espino", "Jair Araujo"]],
+    ["Squad CMS Opensource & Developers", ["Joan Aquino", "Carolina Meza"]],
+  ];
+  return data.map(([name, members]) => ({
+    id: uid(),
+    name,
+    members: members.map((m) => ({ id: uid(), name: m })),
+  }));
+}
+
+// --- localStorage persistence (replaces Claude's window.storage) ---
+function loadConfig() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveConfig(squads, duration) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ squads, duration }));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function DailyQABoard() {
+  const [squads, setSquads] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  const [duration, setDuration] = useState(DEFAULT_DURATION);
+  const [order, setOrder] = useState([]);
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(DEFAULT_DURATION);
+  const [isRunning, setIsRunning] = useState(false);
+  const [doneIds, setDoneIds] = useState(() => new Set());
+  const [editMode, setEditMode] = useState(false);
+  const [storageError, setStorageError] = useState(false);
+  const intervalRef = useRef(null);
+
+  // Load saved squads/duration once; fall back to the hardcoded defaults.
+  // Member order within each squad is reshuffled every time the page loads.
+  useEffect(() => {
+    const parsed = loadConfig();
+    if (parsed && Array.isArray(parsed.squads)) {
+      setSquads(shuffleSquadMembers(parsed.squads));
+      const d = parsed.duration || DEFAULT_DURATION;
+      setDuration(d);
+      setTimeLeft(d);
+    } else {
+      setSquads(shuffleSquadMembers(buildDefaultSquads()));
+    }
+    setLoaded(true);
+  }, []);
+
+  // Persist edits to this browser only
+  useEffect(() => {
+    if (!loaded || squads === null) return;
+    const ok = saveConfig(squads, duration);
+    setStorageError(!ok);
+  }, [squads, duration, loaded]);
+
+  // Keep the flat call order in sync with squad membership
+  useEffect(() => {
+    if (!squads) return;
+    const ids = squads.flatMap((s) => s.members.map((m) => m.id));
+    setOrder((prev) => {
+      const stillValid = prev.filter((id) => ids.includes(id));
+      const fresh = ids.filter((id) => !stillValid.includes(id));
+      return [...stillValid, ...fresh];
+    });
+    setDoneIds((prev) => {
+      const next = new Set();
+      prev.forEach((id) => {
+        if (ids.includes(id)) next.add(id);
+      });
+      return next;
+    });
+  }, [squads]);
+
+  useEffect(() => {
+    if (currentIdx >= order.length && order.length > 0) setCurrentIdx(0);
+  }, [order, currentIdx]);
+
+  const membersById = useCallback(() => {
+    const map = new Map();
+    (squads || []).forEach((s) =>
+      s.members.forEach((m) =>
+        map.set(m.id, { ...m, squadId: s.id, squadName: s.name })
+      )
+    );
+    return map;
+  }, [squads]);
+
+  const totalMembers = order.length;
+  const currentId = order[currentIdx];
+  const currentMember = currentId ? membersById().get(currentId) : null;
+
+  useEffect(() => {
+    if (isRunning) {
+      intervalRef.current = setInterval(() => {
+        setTimeLeft((t) => (t > 0 ? t - 1 : 0));
+      }, 1000);
+    }
+    return () => clearInterval(intervalRef.current);
+  }, [isRunning]);
+
+  useEffect(() => {
+    if (isRunning && timeLeft === 0) {
+      advance();
+    }
+    // eslint-disable-next-line
+  }, [timeLeft]);
+
+  function findNextUndone(fromIdx) {
+    if (order.length === 0) return 0;
+    for (let step = 1; step <= order.length; step++) {
+      const idx = (fromIdx + step) % order.length;
+      if (!doneIds.has(order[idx])) return idx;
+    }
+    return (fromIdx + 1) % order.length;
+  }
+
+  function advance() {
+    setIsRunning(false);
+    if (currentId) {
+      setDoneIds((prev) => {
+        const next = new Set(prev);
+        next.add(currentId);
+        return next;
+      });
+    }
+    setCurrentIdx((idx) => findNextUndone(idx));
+    setTimeLeft(duration);
+  }
+
+  function selectMember(idx) {
+    const id = order[idx];
+    setIsRunning(false);
+    setDoneIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    setCurrentIdx(idx);
+    setTimeLeft(duration);
+  }
+
+  function goPrev() {
+    if (order.length === 0) return;
+    setIsRunning(false);
+    setCurrentIdx((idx) => (idx - 1 + order.length) % order.length);
+    setTimeLeft(duration);
+  }
+
+  function shuffleOrder() {
+    setOrder((prev) => {
+      const arr = [...prev];
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    });
+    setCurrentIdx(0);
+    setTimeLeft(duration);
+    setIsRunning(false);
+  }
+
+  function resetMeeting() {
+    setDoneIds(new Set());
+    setCurrentIdx(0);
+    setTimeLeft(duration);
+    setIsRunning(false);
+  }
+
+  function restoreDefaults() {
+    setSquads(shuffleSquadMembers(buildDefaultSquads()));
+    setDoneIds(new Set());
+    setCurrentIdx(0);
+    setIsRunning(false);
+  }
+
+  function addSquad() {
+    setSquads((prev) => [
+      ...(prev || []),
+      { id: uid(), name: "Nuevo squad", members: [] },
+    ]);
+    setEditMode(true);
+  }
+
+  function removeSquad(squadId) {
+    setSquads((prev) => prev.filter((s) => s.id !== squadId));
+  }
+
+  function renameSquad(squadId, name) {
+    setSquads((prev) => prev.map((s) => (s.id === squadId ? { ...s, name } : s)));
+  }
+
+  function addMember(squadId) {
+    setSquads((prev) =>
+      prev.map((s) =>
+        s.id === squadId
+          ? { ...s, members: [...s.members, { id: uid(), name: "" }] }
+          : s
+      )
+    );
+  }
+
+  function renameMember(squadId, memberId, name) {
+    setSquads((prev) =>
+      prev.map((s) =>
+        s.id === squadId
+          ? {
+              ...s,
+              members: s.members.map((m) =>
+                m.id === memberId ? { ...m, name } : m
+              ),
+            }
+          : s
+      )
+    );
+  }
+
+  function removeMember(squadId, memberId) {
+    setSquads((prev) =>
+      prev.map((s) =>
+        s.id === squadId
+          ? { ...s, members: s.members.filter((m) => m.id !== memberId) }
+          : s
+      )
+    );
+  }
+
+  const doneCount = doneIds.size;
+  const isUrgent = isRunning && timeLeft <= 10 && timeLeft > 0;
+
+  if (squads === null) {
+    return (
+      <div style={{ padding: 40, fontFamily: "sans-serif", color: "#6B778C" }}>
+        Cargando llamado…
+      </div>
+    );
+  }
+
+  return (
+    <div className="qa-board">
+      <div className="qa-header">
+        <div>
+          <p className="qa-title">Daily QA</p>
+          <p className="qa-date">{getTodayLabel()}</p>
+          <p className="qa-progress">
+            Llamados <b>{doneCount}</b> / {totalMembers}
+          </p>
+        </div>
+        <div className="qa-controls-row">
+          <button className="qa-btn ghost" onClick={() => setEditMode((v) => !v)}>
+            {editMode ? "Listo" : "Editar equipos"}
+          </button>
+          <button className="qa-btn ghost" onClick={resetMeeting} disabled={totalMembers === 0}>
+            Reiniciar reunión
+          </button>
+        </div>
+      </div>
+
+      {squads.length === 0 ? (
+        <div className="qa-empty">
+          <h3>No hay squads configurados</h3>
+          <p>Crea un squad o restaura los valores por defecto del código.</p>
+          <div className="qa-empty-actions">
+            <button className="qa-btn primary" onClick={addSquad}>+ Crear squad</button>
+            <button className="qa-btn ghost" onClick={restoreDefaults}>Restaurar valores por defecto</button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="qa-control-panel">
+            <div className="qa-timer-block">
+              <span className="qa-eyebrow">En turno</span>
+              <span className="qa-current-name">
+                {currentMember ? currentMember.name || "Sin nombre" : "—"}
+              </span>
+              <span className="qa-current-squad">
+                {currentMember ? currentMember.squadName : "Selecciona a alguien"}
+              </span>
+            </div>
+            <div className={`qa-timer ${isUrgent ? "urgent" : ""}`}>
+              {formatTime(timeLeft)}
+            </div>
+            <div className="qa-controls-row">
+              <button className="qa-btn ghost" onClick={goPrev} disabled={totalMembers === 0}>
+                ← Anterior
+              </button>
+              <button
+                className="qa-btn primary"
+                onClick={() => {
+                  if (isRunning) {
+                    advance();
+                  } else {
+                    setIsRunning(true);
+                  }
+                }}
+                disabled={!currentMember}
+              >
+                {isRunning ? "■ Detener" : "▶ Iniciar"}
+              </button>
+              <div className="qa-duration-input">
+                Min/persona
+                <input
+                  type="number"
+                  min="1"
+                  max="30"
+                  value={Math.round(duration / 60)}
+                  onChange={(e) => {
+                    const mins = Math.max(1, Number(e.target.value) || 1);
+                    setDuration(mins * 60);
+                    if (!isRunning) setTimeLeft(mins * 60);
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="qa-squads-grid">
+            {squads.map((squad, index) => {
+              const doneInSquad = squad.members.filter((m) => doneIds.has(m.id)).length;
+              return (
+                <div className="qa-squad" key={squad.id} style={{ background: pastelForIndex(index) }}>
+                  <div className="qa-squad-head">
+                    {editMode ? (
+                      <input
+                        className="qa-edit-input"
+                        value={squad.name}
+                        onChange={(e) => renameSquad(squad.id, e.target.value)}
+                        placeholder="Nombre del squad"
+                      />
+                    ) : (
+                      <span className="qa-squad-name">{squad.name}</span>
+                    )}
+                    {!editMode && (
+                      <span className="qa-squad-tally">
+                        {doneInSquad}/{squad.members.length}
+                      </span>
+                    )}
+                    {editMode && (
+                      <button className="qa-btn danger" onClick={() => removeSquad(squad.id)}>
+                        Eliminar
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="qa-member-grid">
+                    {squad.members.map((m) => {
+                      const idx = order.indexOf(m.id);
+                      const isActive = idx === currentIdx && idx !== -1;
+                      const isDone = doneIds.has(m.id);
+                      if (editMode) {
+                        return (
+                          <div key={m.id} style={{ width: 110 }}>
+                            <input
+                              className="qa-edit-input"
+                              value={m.name}
+                              placeholder="Nombre"
+                              onChange={(e) => renameMember(squad.id, m.id, e.target.value)}
+                            />
+                            <button
+                              className="qa-btn danger"
+                              style={{ width: "100%" }}
+                              onClick={() => removeMember(squad.id, m.id)}
+                            >
+                              Quitar
+                            </button>
+                          </div>
+                        );
+                      }
+                      return (
+                        <button
+                          key={m.id}
+                          className={`qa-member ${isActive ? "active" : ""} ${isDone ? "done" : ""}`}
+                          onClick={() => idx !== -1 && selectMember(idx)}
+                        >
+                          <span className="qa-avatar" style={{ background: colorForName(m.name || "?") }}>
+                            {initialsForName(m.name || "?")}
+                            {isDone && <span className="qa-check">✓</span>}
+                          </span>
+                          <span className="qa-member-name">{m.name || "Sin nombre"}</span>
+                        </button>
+                      );
+                    })}
+                    {editMode && (
+                      <button
+                        className="qa-btn ghost"
+                        onClick={() => addMember(squad.id)}
+                        style={{ height: 40, alignSelf: "center" }}
+                      >
+                        + Persona
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {editMode && (
+            <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
+              <button className="qa-btn primary" onClick={addSquad}>
+                + Agregar squad
+              </button>
+              <button className="qa-btn ghost" onClick={restoreDefaults}>
+                Restaurar valores por defecto
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      <p className="qa-note">
+        Los squads por defecto vienen definidos. Si los editas desde la web, el cambio se
+        guarda solo en este navegador.{" "}
+        {storageError ? "No se pudo guardar el último cambio." : ""}
+      </p>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<DailyQABoard />);
+</script>
+
+<style>
+  .qa-board {
+    --bg: #F7F8F9;
+    --panel: #FFFFFF;
+    --border: #DFE1E6;
+    --text: #172B4D;
+    --muted: #6B778C;
+    --accent: #0052CC;
+    --accent-hover: #0747A6;
+    --accent-soft: #DEEBFF;
+    --success: #00875A;
+    --success-soft: #E3FCEF;
+    --success-text: #006644;
+    --danger: #DE350B;
+    --danger-soft: #FFEBE6;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    width: 100%;
+    padding: 24px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+  }
+  .qa-board * { box-sizing: border-box; }
+  .qa-header {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    flex-wrap: wrap; gap: 16px; margin-bottom: 20px;
+  }
+  .qa-title { font-size: 20px; font-weight: 700; color: var(--text); margin: 0 0 4px; }
+  .qa-date { font-size: 14px; color: var(--muted); margin: 0 0 4px; }
+  .qa-progress { font-size: 15px; color: var(--muted); margin: 4px 0 0; }
+  .qa-progress b { color: var(--accent); }
+
+  button.qa-btn {
+    background: #F1F2F4; border: 1px solid transparent; color: var(--text);
+    padding: 9px 16px; border-radius: 3px; font-family: inherit; font-weight: 500;
+    font-size: 14px; cursor: pointer; transition: background 0.12s ease;
+  }
+  button.qa-btn:hover { background: #DCDFE4; }
+  button.qa-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.qa-btn.primary { background: var(--accent); color: #FFFFFF; font-weight: 600; }
+  button.qa-btn.primary:hover { background: var(--accent-hover); }
+  button.qa-btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  button.qa-btn.ghost:hover { background: #F1F2F4; }
+  button.qa-btn.lime { background: #B7E64C; color: #234000; font-weight: 600; }
+  button.qa-btn.lime:hover { background: #A6D93E; }
+  button.qa-btn.danger { background: transparent; color: var(--danger); padding: 5px 9px; font-size: 13px; }
+  button.qa-btn.danger:hover { background: var(--danger-soft); }
+  button.qa-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .qa-control-panel {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
+    box-shadow: 0 1px 2px rgba(9,30,66,0.13); padding: 18px 22px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 22px; margin-bottom: 24px;
+  }
+  .qa-timer-block { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 150px; }
+  .qa-eyebrow { font-size: 13px; letter-spacing: 0.03em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  .qa-current-name { font-size: 18px; font-weight: 600; }
+  .qa-current-squad { font-size: 14px; color: var(--muted); }
+  .qa-timer { font-size: 56px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); line-height: 1; }
+  .qa-timer.urgent { color: var(--danger); animation: qa-pulse 1s infinite; }
+  @media (prefers-reduced-motion: reduce) { .qa-timer.urgent { animation: none; } }
+  @keyframes qa-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+  .qa-controls-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .qa-duration-input { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+  .qa-duration-input input {
+    width: 48px; background: var(--panel); border: 1px solid var(--border);
+    color: var(--text); border-radius: 3px; padding: 4px 6px; font-family: inherit;
+  }
+
+  .qa-squads-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+  .qa-squad { border: 1px solid var(--border); border-radius: 4px; box-shadow: 0 1px 2px rgba(9,30,66,0.1); padding: 14px; }
+  .qa-squad-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .qa-squad-name { font-size: 13px; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text); font-weight: 700; }
+  .qa-squad-tally { font-size: 13px; font-weight: 700; color: var(--success-text); background: var(--success-soft); padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+  .qa-member-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+  .qa-member { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 76px; cursor: pointer; background: none; border: none; color: inherit; font-family: inherit; padding: 4px; border-radius: 6px; }
+  .qa-member:hover { background: rgba(255,255,255,0.5); }
+  .qa-member:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .qa-avatar {
+    position: relative; width: 46px; height: 46px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 15px; color: #FFFFFF;
+    border: 2px solid transparent; transition: box-shadow 0.12s ease;
+  }
+  .qa-member.active .qa-avatar { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+  .qa-member.done .qa-avatar { opacity: 1; }
+  .qa-check {
+    position: absolute; bottom: -2px; right: -2px; width: 18px; height: 18px;
+    border-radius: 50%; background: var(--success); color: #FFFFFF; font-size: 11px;
+    display: flex; align-items: center; justify-content: center; border: 2px solid var(--panel);
+  }
+  .qa-member-name { font-size: 13px; text-align: center; line-height: 1.25; color: var(--text); overflow-wrap: anywhere; }
+  .qa-member.done .qa-member-name { color: var(--muted); }
+
+  .qa-empty { text-align: center; padding: 56px 20px; color: var(--muted); background: var(--panel); border: 1px solid var(--border); border-radius: 4px; }
+  .qa-empty h3 { color: var(--text); font-size: 18px; margin-bottom: 8px; }
+  .qa-empty-actions { display: flex; gap: 10px; justify-content: center; margin-top: 16px; flex-wrap: wrap; }
+
+  .qa-edit-input {
+    background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    border-radius: 3px; padding: 5px 9px; font-family: inherit; font-size: 13px; width: 100%; margin-bottom: 4px;
+  }
+  .qa-note { font-size: 12px; color: var(--muted); margin-top: auto; padding-top: 18px; }
+
+  @media (max-width: 900px) {
+    .qa-squads-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 480px) {
+    .qa-squads-grid { grid-template-columns: 1fr; }
+    .qa-timer { font-size: 40px; }
+    .qa-board { padding: 16px; }
+  }
+</style>
+</body>
+</html>
