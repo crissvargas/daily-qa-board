@@ -55,6 +55,8 @@
   button.qa-btn.ghost:hover { background: #F1F2F4; }
   button.qa-btn.lime { background: #B7E64C; color: #234000; font-weight: 600; }
   button.qa-btn.lime:hover { background: #A6D93E; }
+  button.qa-btn.rose { background: var(--danger-soft); color: var(--danger); font-weight: 600; }
+  button.qa-btn.rose:hover { background: #FFD9CC; }
   button.qa-btn.danger { background: transparent; color: var(--danger); padding: 5px 9px; font-size: 13px; }
   button.qa-btn.danger:hover { background: var(--danger-soft); }
   button.qa-btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -80,7 +82,8 @@
   }
 
   .qa-squads-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
-  .qa-squad { border: 1px solid var(--border); border-radius: 4px; box-shadow: 0 1px 2px rgba(9,30,66,0.1); padding: 14px; }
+  .qa-squad { border: 1px solid var(--border); border-radius: 4px; box-shadow: 0 1px 2px rgba(9,30,66,0.1); padding: 14px; transition: box-shadow 0.15s ease, border-color 0.15s ease; }
+  .qa-squad.qa-squad-active { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), 0 4px 10px rgba(9,30,66,0.18); }
   .qa-squad-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 12px; }
   .qa-squad-name { font-size: 13px; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text); font-weight: 700; }
   .qa-squad-tally { font-size: 13px; font-weight: 700; color: var(--success-text); background: var(--success-soft); padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
@@ -94,7 +97,7 @@
     font-weight: 700; font-size: 15px; color: #FFFFFF;
     border: 2px solid transparent; transition: box-shadow 0.12s ease;
   }
-  .qa-member.active .qa-avatar { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+  .qa-member.active .qa-avatar { border-color: #FFFFFF; box-shadow: 0 0 0 4px var(--accent-soft); }
   .qa-check {
     position: absolute; bottom: -2px; right: -2px; width: 18px; height: 18px;
     border-radius: 50%; background: var(--success); color: #FFFFFF; font-size: 11px;
@@ -195,22 +198,28 @@
   }
 
   function shuffleSquadMembers(squadList) {
-    return squadList.map(function (s) {
+    return shuffleArray(squadList).map(function (s) {
       return Object.assign({}, s, { members: shuffleArray(s.members) });
     });
   }
 
+  var DEFAULT_SQUADS_DATA = [
+    ["Squad Boton Web", ["Brandon Villanueva", "Sandro Villegas", "Daniel Espiritu"]],
+    ["Squad SDK Movil", ["Jonathan Picon"]],
+    ["Squad Tokenización", ["Kenyo Solis", "Juan Carlos Araujo"]],
+    ["Squad Recurrentes", ["Victoria Farah", "Kevin Yenque", "Carolina Destinobles", "Carlos Chafloque"]],
+    ["Squad CMS Empresa", ["Sharon Maiz"]],
+    ["Squad Procesamiento", ["Keyko Soto", "Ray Reyes", "Gustavo Espino", "Jair Araujo"]],
+    ["Squad CMS Opensource & Developers", ["Joan Aquino", "Carolina Meza"]],
+  ];
+
+  // Se recalcula sola a partir de DEFAULT_SQUADS_DATA: si edita esa lista en el
+  // código y publica, cambia el string y con eso se invalida cualquier
+  // configuración de equipos guardada en el navegador de cada persona.
+  var DEFAULT_SQUADS_SIGNATURE = JSON.stringify(DEFAULT_SQUADS_DATA);
+
   function buildDefaultSquads() {
-    var data = [
-      ["Squad Boton Web", ["Brandon Villanueva", "Sandro Villegas", "Daniel Espiritu"]],
-      ["Squad SDK Movil", ["Jonathan Picon"]],
-      ["Squad Tokenización", ["Kenyo Solis", "Juan Carlos Araujo"]],
-      ["Squad Recurrentes", ["Victoria Farah", "Kevin Yenque", "Carolina Destinobles", "Carlos Chafloque"]],
-      ["Squad CMS Empresa", ["Sharon Maiz"]],
-      ["Squad Procesamiento", ["Keyko Soto", "Ray Reyes", "Gustavo Espino", "Jair Araujo"]],
-      ["Squad CMS Opensource & Developers", ["Joan Aquino", "Carolina Meza"]],
-    ];
-    return data.map(function (pair) {
+    return DEFAULT_SQUADS_DATA.map(function (pair) {
       return {
         id: uid(),
         name: pair[0],
@@ -243,7 +252,11 @@
 
   function saveConfigNow() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ squads: squads, duration: duration }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        squads: squads,
+        duration: duration,
+        signature: DEFAULT_SQUADS_SIGNATURE,
+      }));
       return true;
     } catch (e) {
       return false;
@@ -442,7 +455,11 @@
     html += '<p class="qa-progress">Llamados <b>' + doneCount + '</b> / ' + order.length + '</p>';
     html += '</div>';
     html += '<div class="qa-controls-row">';
-    html += '<button class="qa-btn ghost" data-action="toggle-edit">' + (editMode ? "Listo" : "Editar equipos") + '</button>';
+    if (!editMode) {
+      html += '<button class="qa-btn ghost" data-action="toggle-edit">Editar equipos</button>';
+    } else {
+      html += '<button class="qa-btn rose" data-action="restore-defaults">Restaurar valores por defecto</button>';
+    }
     html += '<button class="qa-btn ghost" data-action="reset-meeting" ' + (order.length === 0 ? "disabled" : "") + '>Reiniciar reunión</button>';
     html += '</div>';
     html += '</div>';
@@ -453,7 +470,7 @@
       html += '<p>Crea un squad o restaura los valores por defecto del código.</p>';
       html += '<div class="qa-empty-actions">';
       html += '<button class="qa-btn primary" data-action="add-squad">+ Crear squad</button>';
-      html += '<button class="qa-btn ghost" data-action="restore-defaults">Restaurar valores por defecto</button>';
+      html += '<button class="qa-btn rose" data-action="restore-defaults">Restaurar valores por defecto</button>';
       html += '</div></div>';
     } else {
       html += '<div class="qa-control-panel">';
@@ -472,7 +489,8 @@
       html += '<div class="qa-squads-grid">';
       squads.forEach(function (squad, index) {
         var doneInSquad = squad.members.filter(function (m) { return doneIds[m.id]; }).length;
-        html += '<div class="qa-squad" style="background:' + pastelForIndex(index) + '">';
+        var isSquadActive = !editMode && current && current.squadId === squad.id;
+        html += '<div class="qa-squad' + (isSquadActive ? " qa-squad-active" : "") + '" style="background:' + pastelForIndex(index) + '">';
         html += '<div class="qa-squad-head">';
         if (editMode) {
           html += '<input class="qa-edit-input" data-input="squad-name" data-squad="' + squad.id + '" value="' + escapeHtml(squad.name) + '" placeholder="Nombre del squad" />';
@@ -512,7 +530,7 @@
       if (editMode) {
         html += '<div style="margin-top:16px;display:flex;gap:10px">';
         html += '<button class="qa-btn primary" data-action="add-squad">+ Agregar squad</button>';
-        html += '<button class="qa-btn ghost" data-action="restore-defaults">Restaurar valores por defecto</button>';
+        html += '<button class="qa-btn lime" data-action="toggle-edit">Listo</button>';
         html += '</div>';
       }
     }
@@ -564,7 +582,7 @@
 
   // ---------------- init ----------------
   var parsed = loadConfig();
-  if (parsed && Array.isArray(parsed.squads)) {
+  if (parsed && Array.isArray(parsed.squads) && parsed.signature === DEFAULT_SQUADS_SIGNATURE) {
     squads = shuffleSquadMembers(parsed.squads);
     duration = parsed.duration || DEFAULT_DURATION;
     timeLeft = duration;
