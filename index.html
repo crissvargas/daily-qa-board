@@ -4,11 +4,20 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Daily QA</title>
+<script>
+  // Aplica el tema antes de pintar la página para evitar un parpadeo.
+  (function () {
+    var theme = null;
+    try { theme = localStorage.getItem("qaDailyBoardTheme"); } catch (e) {}
+    if (theme !== "dark" && theme !== "light") {
+      theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    document.documentElement.setAttribute("data-theme", theme);
+  })();
+</script>
 <style>
-  html, body { margin: 0; padding: 0; background: #F7F8F9; }
-  #root { min-height: 100vh; }
-
-  .qa-board {
+  :root {
+    color-scheme: light;
     --bg: #F7F8F9;
     --panel: #FFFFFF;
     --border: #DFE1E6;
@@ -17,11 +26,48 @@
     --accent: #0052CC;
     --accent-hover: #0747A6;
     --accent-soft: #DEEBFF;
+    --on-accent: #FFFFFF;
     --success: #00875A;
     --success-soft: #E3FCEF;
     --success-text: #006644;
     --danger: #DE350B;
     --danger-soft: #FFEBE6;
+    --danger-soft-hover: #FFD9CC;
+    --btn-bg: #F1F2F4;
+    --btn-hover: #DCDFE4;
+    --member-hover: rgba(255,255,255,0.5);
+    --shadow: rgba(9,30,66,0.13);
+    --squad-0: #FFF3B0; --squad-1: #FFD6E8; --squad-2: #CFE3FF; --squad-3: #E4D6FF;
+    --squad-4: #FFDCC2; --squad-5: #D6F5D0; --squad-6: #D9F0F5;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #1D2125;
+    --panel: #22272B;
+    --border: #38414A;
+    --text: #DEE4EA;
+    --muted: #9FADBC;
+    --accent: #579DFF;
+    --accent-hover: #85B8FF;
+    --accent-soft: #09326C;
+    --on-accent: #1D2125;
+    --success: #1F845A;
+    --success-soft: #164B35;
+    --success-text: #7EE2B8;
+    --danger: #F87168;
+    --danger-soft: #42221F;
+    --danger-soft-hover: #5D1F1A;
+    --btn-bg: #2C333A;
+    --btn-hover: #38414A;
+    --member-hover: rgba(255,255,255,0.08);
+    --shadow: rgba(0,0,0,0.4);
+    --squad-0: #3A3416; --squad-1: #3E2433; --squad-2: #1C2B41; --squad-3: #2B2541;
+    --squad-4: #3E2A1E; --squad-5: #1F3325; --squad-6: #1B3338;
+  }
+  html, body { margin: 0; padding: 0; background: var(--bg); }
+  #root { min-height: 100vh; }
+
+  .qa-board {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     background: var(--bg);
     color: var(--text);
@@ -43,27 +89,27 @@
   .qa-progress b { color: var(--accent); }
 
   button.qa-btn {
-    background: #F1F2F4; border: 1px solid transparent; color: var(--text);
+    background: var(--btn-bg); border: 1px solid transparent; color: var(--text);
     padding: 9px 16px; border-radius: 3px; font-family: inherit; font-weight: 500;
     font-size: 14px; cursor: pointer; transition: background 0.12s ease;
   }
-  button.qa-btn:hover { background: #DCDFE4; }
+  button.qa-btn:hover { background: var(--btn-hover); }
   button.qa-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  button.qa-btn.primary { background: var(--accent); color: #FFFFFF; font-weight: 600; }
+  button.qa-btn.primary { background: var(--accent); color: var(--on-accent); font-weight: 600; }
   button.qa-btn.primary:hover { background: var(--accent-hover); }
   button.qa-btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
-  button.qa-btn.ghost:hover { background: #F1F2F4; }
+  button.qa-btn.ghost:hover { background: var(--btn-bg); }
   button.qa-btn.lime { background: #B7E64C; color: #234000; font-weight: 600; }
   button.qa-btn.lime:hover { background: #A6D93E; }
   button.qa-btn.rose { background: var(--danger-soft); color: var(--danger); font-weight: 600; }
-  button.qa-btn.rose:hover { background: #FFD9CC; }
+  button.qa-btn.rose:hover { background: var(--danger-soft-hover); }
   button.qa-btn.danger { background: transparent; color: var(--danger); padding: 5px 9px; font-size: 13px; }
   button.qa-btn.danger:hover { background: var(--danger-soft); }
   button.qa-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .qa-control-panel {
     background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
-    box-shadow: 0 1px 2px rgba(9,30,66,0.13); padding: 18px 22px;
+    box-shadow: 0 1px 2px var(--shadow); padding: 18px 22px;
     display: flex; flex-wrap: wrap; align-items: center; gap: 22px; margin-bottom: 24px;
   }
   .qa-timer-block { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 150px; }
@@ -82,14 +128,21 @@
   }
 
   .qa-squads-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
-  .qa-squad { border: 1px solid var(--border); border-radius: 4px; box-shadow: 0 1px 2px rgba(9,30,66,0.1); padding: 14px; transition: box-shadow 0.15s ease, border-color 0.15s ease; }
-  .qa-squad.qa-squad-active { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), 0 4px 10px rgba(9,30,66,0.18); }
+  .qa-squad { border: 1px solid var(--border); border-radius: 4px; box-shadow: 0 1px 2px var(--shadow); padding: 14px; transition: box-shadow 0.15s ease, border-color 0.15s ease; }
+  .qa-squad.qa-squad-active { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), 0 4px 10px var(--shadow); }
+  .qa-squad-tone-0 { background: var(--squad-0); }
+  .qa-squad-tone-1 { background: var(--squad-1); }
+  .qa-squad-tone-2 { background: var(--squad-2); }
+  .qa-squad-tone-3 { background: var(--squad-3); }
+  .qa-squad-tone-4 { background: var(--squad-4); }
+  .qa-squad-tone-5 { background: var(--squad-5); }
+  .qa-squad-tone-6 { background: var(--squad-6); }
   .qa-squad-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 12px; }
   .qa-squad-name { font-size: 13px; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text); font-weight: 700; }
   .qa-squad-tally { font-size: 13px; font-weight: 700; color: var(--success-text); background: var(--success-soft); padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
   .qa-member-grid { display: flex; flex-wrap: wrap; gap: 12px; }
   .qa-member { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 76px; cursor: pointer; background: none; border: none; color: inherit; font-family: inherit; padding: 4px; border-radius: 6px; }
-  .qa-member:hover { background: rgba(255,255,255,0.5); }
+  .qa-member:hover { background: var(--member-hover); }
   .qa-member:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .qa-avatar {
     position: relative; width: 46px; height: 46px; border-radius: 50%;
@@ -97,7 +150,7 @@
     font-weight: 700; font-size: 15px; color: #FFFFFF;
     border: 2px solid transparent; transition: box-shadow 0.12s ease;
   }
-  .qa-member.active .qa-avatar { border-color: #FFFFFF; box-shadow: 0 0 0 4px var(--accent-soft); }
+  .qa-member.active .qa-avatar { border-color: var(--panel); box-shadow: 0 0 0 4px var(--accent-soft); }
   .qa-check {
     position: absolute; bottom: -2px; right: -2px; width: 18px; height: 18px;
     border-radius: 50%; background: var(--success); color: #FFFFFF; font-size: 11px;
@@ -138,13 +191,12 @@
     "#6554C0", "#36B37E", "#FF8B00", "#8777D9", "#4C9AFF",
   ];
 
-  var SQUAD_PASTELS = [
-    "#FFF3B0", "#FFD6E8", "#CFE3FF", "#E4D6FF",
-    "#FFDCC2", "#D6F5D0", "#D9F0F5",
-  ];
+  // Los colores de cada tono están en CSS (--squad-N) para que cambien con el tema.
+  var SQUAD_TONE_COUNT = 7;
 
   var DEFAULT_DURATION = 120;
   var STORAGE_KEY = "qaDailyBoardConfig_v2";
+  var THEME_KEY = "qaDailyBoardTheme";
 
   function colorForName(name) {
     var hash = 0;
@@ -154,8 +206,19 @@
     return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
   }
 
-  function pastelForIndex(idx) {
-    return SQUAD_PASTELS[idx % SQUAD_PASTELS.length];
+  function toneClassForIndex(idx) {
+    return "qa-squad-tone-" + (idx % SQUAD_TONE_COUNT);
+  }
+
+  function getTheme() {
+    return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+  }
+
+  function toggleTheme() {
+    var next = getTheme() === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem(THEME_KEY, next); } catch (e) {}
+    render();
   }
 
   function initialsForName(name) {
@@ -204,13 +267,12 @@
   }
 
   var DEFAULT_SQUADS_DATA = [
-    ["Squad Boton Web", ["Brandon Villanueva", "Sandro Villegas", "Daniel Espiritu","Carlos Chafloque","Carolina Meza"]],
-    ["Squad SDK Movil", ["Jonathan Picon"]],
+    ["Squad Boton Web", ["Brandon Villanueva", "Sandro Villegas", "Daniel Espiritu","Carlos Chafloque"]],
+    ["Squad SDK Movil", ["Jonathan Picon","Carolina Meza"]],
     ["Squad Tokenización", ["Kenyo Solis", "Juan Carlos Araujo"]],
     ["Squad Recurrentes", ["Victoria Farah","Joan Aquino", "Kevin Yenque"]],
-    ["Squad CMS Empresa", ["Sharon Maiz"]],
     ["Squad Procesamiento", ["Keyko Soto", "Ray Reyes", "Gustavo Espino", "Jair Araujo"]],
-    ["Squad CMS Opensource & Developers", ["Fabiola Tapara"]],
+    ["Squad CMS Opensource & Developers", ["Fabiola Tapara","Sharon Maiz"]],
   ];
 
   // Se recalcula sola a partir de DEFAULT_SQUADS_DATA: si edita esa lista en el
@@ -327,9 +389,15 @@
   }
 
   function selectMember(idx) {
+    var order = getOrder();
+    // Si el turno actual ya corrió más de un segundo y se elige a otra persona,
+    // se da por llamado sin tener que pasar por "Detener".
+    var current = order[currentIdx];
+    if (isRunning && current && idx !== currentIdx && duration - timeLeft > 1) {
+      doneIds[current.id] = true;
+    }
     isRunning = false;
     clearTick();
-    var order = getOrder();
     var id = order[idx] && order[idx].id;
     if (id && doneIds[id]) delete doneIds[id];
     currentIdx = idx;
@@ -343,6 +411,8 @@
     isRunning = false;
     clearTick();
     currentIdx = (currentIdx - 1 + order.length) % order.length;
+    // Volver a alguien lo desmarca, para poder repetir su turno.
+    delete doneIds[order[currentIdx].id];
     timeLeft = duration;
     render();
   }
@@ -455,6 +525,8 @@
     html += '<p class="qa-progress">Llamados <b>' + doneCount + '</b> / ' + order.length + '</p>';
     html += '</div>';
     html += '<div class="qa-controls-row">';
+    var isDark = getTheme() === "dark";
+    html += '<button class="qa-btn ghost" data-action="toggle-theme" aria-label="Cambiar a modo ' + (isDark ? "claro" : "oscuro") + '">' + (isDark ? "☀️ Modo claro" : "🌙 Modo oscuro") + '</button>';
     if (!editMode) {
       html += '<button class="qa-btn ghost" data-action="toggle-edit">Editar equipos</button>';
     } else {
@@ -490,7 +562,7 @@
       squads.forEach(function (squad, index) {
         var doneInSquad = squad.members.filter(function (m) { return doneIds[m.id]; }).length;
         var isSquadActive = !editMode && current && current.squadId === squad.id;
-        html += '<div class="qa-squad' + (isSquadActive ? " qa-squad-active" : "") + '" style="background:' + pastelForIndex(index) + '">';
+        html += '<div class="qa-squad ' + toneClassForIndex(index) + (isSquadActive ? " qa-squad-active" : "") + '">';
         html += '<div class="qa-squad-head">';
         if (editMode) {
           html += '<input class="qa-edit-input" data-input="squad-name" data-squad="' + squad.id + '" value="' + escapeHtml(squad.name) + '" placeholder="Nombre del squad" />';
@@ -559,7 +631,8 @@
     var memberId = el.getAttribute("data-member");
     var idx = el.getAttribute("data-idx");
 
-    if (action === "toggle-edit") toggleEditMode();
+    if (action === "toggle-theme") toggleTheme();
+    else if (action === "toggle-edit") toggleEditMode();
     else if (action === "reset-meeting") resetMeeting();
     else if (action === "restore-defaults") restoreDefaults();
     else if (action === "add-squad") addSquad();
