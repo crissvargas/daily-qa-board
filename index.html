@@ -8,10 +8,9 @@
   // Aplica el tema antes de pintar la página para evitar un parpadeo.
   (function () {
     var theme = null;
-    try { theme = localStorage.getItem("qaDailyBoardTheme"); } catch (e) {}
-    if (theme !== "dark" && theme !== "light") {
-      theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    }
+    try { theme = localStorage.getItem("qaDailyBoardTheme_v2"); } catch (e) {}
+    // Por defecto siempre claro; solo es oscuro si la persona lo eligió con el botón.
+    if (theme !== "dark") theme = "light";
     document.documentElement.setAttribute("data-theme", theme);
   })();
 </script>
@@ -196,7 +195,7 @@
 
   var DEFAULT_DURATION = 120;
   var STORAGE_KEY = "qaDailyBoardConfig_v2";
-  var THEME_KEY = "qaDailyBoardTheme";
+  var THEME_KEY = "qaDailyBoardTheme_v2";
 
   function colorForName(name) {
     var hash = 0;
